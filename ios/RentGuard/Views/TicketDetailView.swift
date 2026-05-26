@@ -17,6 +17,9 @@ struct TicketDetailView: View {
     @State private var showResolvedConfirmation = false
     @State private var showScheduleSheet = false
     @State private var showVendorPicker = false
+    @State private var replyText = ""
+    @State private var isSendingReply = false
+    @FocusState private var isReplyFocused: Bool
 
     private let aiService = AIWorkflowService()
 
@@ -28,10 +31,12 @@ struct TicketDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     priorityHeader
                     messageCard
-                    tenantInfoCard
+                    conversationCard
+                    replyBar
                     workflowTimeline
                     actionButtons
                     notesCard
+                    tenantInfoCard
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 12)
@@ -169,6 +174,170 @@ struct TicketDetailView: View {
         }
         .padding(18)
         .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    // MARK: - Conversation Card
+
+    private var conversationCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Conversation", systemImage: "bubble.left.and.bubble.right.fill")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                if ticket.hasConversation {
+                    Text("\(ticket.messages.count) messages")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.4))
+                }
+            }
+
+            if ticket.messages.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "ellipsis.bubble.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(.white.opacity(0.25))
+                    Text("No replies yet. Type a message below to respond to the tenant.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.35))
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(ticket.messages) { message in
+                        chatBubble(message)
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private func chatBubble(_ message: ChatMessage) -> some View {
+        let isLandlord = message.sender == .landlord
+
+        return HStack(alignment: .top, spacing: 10) {
+            if isLandlord { Spacer(minLength: 50) }
+
+            VStack(alignment: isLandlord ? .trailing : .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if !isLandlord {
+                        Circle()
+                            .fill(ticket.category.tint.opacity(0.3))
+                            .frame(width: 22, height: 22)
+                            .overlay {
+                                Text(String(ticket.tenantName.prefix(1)))
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(ticket.category.tint)
+                            }
+                        Text(ticket.tenantName)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.5))
+                    } else {
+                        Text("You")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(Color(red: 0.18, green: 0.82, blue: 0.78))
+                        Circle()
+                            .fill(Color(red: 0.18, green: 0.82, blue: 0.78).opacity(0.25))
+                            .frame(width: 22, height: 22)
+                            .overlay {
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(Color(red: 0.18, green: 0.82, blue: 0.78))
+                            }
+                    }
+                }
+
+                Text(message.text)
+                    .font(.subheadline)
+                    .foregroundStyle(isLandlord ? .black : .white)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        isLandlord
+                            ? Color(red: 0.18, green: 0.82, blue: 0.78)
+                            : .white.opacity(0.1),
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    )
+
+                Text(message.timestamp.formatted(.dateTime.hour().minute()))
+                    .font(.system(size: 9))
+                    .foregroundStyle(.white.opacity(0.25))
+            }
+
+            if !isLandlord { Spacer(minLength: 50) }
+        }
+    }
+
+    // MARK: - Reply Bar
+
+    private var replyBar: some View {
+        HStack(spacing: 10) {
+            TextField("Type a reply to \(ticket.tenantName)...", text: $replyText, axis: .vertical)
+                .focused($isReplyFocused)
+                .font(.subheadline)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(.white.opacity(0.12))
+                }
+                .lineLimit(1...4)
+
+            Button {
+                sendReply()
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(
+                            replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? Color.white.opacity(0.15)
+                                : Color(red: 0.18, green: 0.82, blue: 0.78)
+                        )
+                        .frame(width: 42, height: 42)
+
+                    if isSendingReply {
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundStyle(
+                                replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    ? .white.opacity(0.4)
+                                    : .black
+                            )
+                    }
+                }
+            }
+            .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSendingReply)
+            .buttonStyle(PressableButtonStyle())
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func sendReply() {
+        let text = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        isSendingReply = true
+        isReplyFocused = false
+
+        // Brief haptic-feel delay then send
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
+                viewModel.sendManualReply(text, to: ticket)
+            }
+            replyText = ""
+            isSendingReply = false
+        }
     }
 
     // MARK: - Tenant Info

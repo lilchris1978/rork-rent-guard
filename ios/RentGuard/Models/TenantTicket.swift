@@ -9,6 +9,28 @@ import Foundation
 import SwiftData
 import SwiftUI
 
+// MARK: - Conversation Messages
+
+/// Represents a single SMS message in the landlord-tenant conversation
+struct ChatMessage: Codable, Identifiable, Equatable {
+    let id: UUID
+    let sender: MessageSender
+    let text: String
+    let timestamp: Date
+
+    init(id: UUID = UUID(), sender: MessageSender, text: String, timestamp: Date = Date()) {
+        self.id = id
+        self.sender = sender
+        self.text = text
+        self.timestamp = timestamp
+    }
+}
+
+enum MessageSender: String, Codable, CaseIterable {
+    case tenant
+    case landlord
+}
+
 @Model
 final class TenantTicketModel {
     var id: UUID
@@ -33,6 +55,7 @@ final class TenantTicketModel {
     var assignedVendorPhone: String
     var assignedVendorTradeRaw: String
     var aiReply: String
+    var conversationJSON: String
 
     init(
         id: UUID = UUID(),
@@ -52,7 +75,8 @@ final class TenantTicketModel {
         assignedVendorName: String = "",
         assignedVendorPhone: String = "",
         assignedVendorTrade: VendorTrade = .handyman,
-        aiReply: String = ""
+        aiReply: String = "",
+        conversationJSON: String = ""
     ) {
         self.id = id
         self.tenantName = tenantName
@@ -74,6 +98,44 @@ final class TenantTicketModel {
         self.assignedVendorPhone = assignedVendorPhone
         self.assignedVendorTradeRaw = assignedVendorTrade.rawValue
         self.aiReply = aiReply
+        self.conversationJSON = conversationJSON
+    }
+
+    // MARK: - Conversation Management
+
+    /// All messages in the conversation (tenant SMS + landlord replies)
+    var messages: [ChatMessage] {
+        get {
+            guard let data = conversationJSON.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode([ChatMessage].self, from: data) else {
+                return []
+            }
+            return decoded
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue),
+               let json = String(data: data, encoding: .utf8) {
+                conversationJSON = json
+            }
+        }
+    }
+
+    /// Appends a message to the conversation
+    func appendMessage(sender: MessageSender, text: String) {
+        let message = ChatMessage(sender: sender, text: text)
+        var current = messages
+        current.append(message)
+        messages = current
+    }
+
+    /// The latest reply sent to the tenant (landlord side)
+    var latestReply: ChatMessage? {
+        messages.last { $0.sender == .landlord }
+    }
+
+    /// Whether there's been any back-and-forth conversation
+    var hasConversation: Bool {
+        messages.count > 1
     }
 }
 

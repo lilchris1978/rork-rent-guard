@@ -254,6 +254,12 @@ final class TicketViewModel {
         )
         ticket.aiReply = reply
 
+        // Record auto-reply in conversation
+        if ticket.messages.isEmpty {
+            ticket.appendMessage(sender: .tenant, text: ticket.message)
+        }
+        ticket.appendMessage(sender: .landlord, text: reply)
+
         // Step 5: Create appointment record
         let appointment = AppointmentModel(
             ticketID: ticket.id,
@@ -299,6 +305,12 @@ final class TicketViewModel {
             )
             ticket.aiReply = reply
 
+            // Record in conversation
+            if ticket.messages.isEmpty {
+                ticket.appendMessage(sender: .tenant, text: ticket.message)
+            }
+            ticket.appendMessage(sender: .landlord, text: reply)
+
             // Create appointment
             let appointment = AppointmentModel(
                 ticketID: ticket.id,
@@ -315,10 +327,29 @@ final class TicketViewModel {
         }
     }
 
-    /// Called when the landlord sends a manual SMS reply (override auto-reply)
+    /// Called when the landlord sends a manual SMS reply
     func sendManualReply(_ text: String, to ticket: TenantTicketModel) {
+        // Ensure the tenant's original message is in the conversation
+        if ticket.messages.isEmpty {
+            ticket.appendMessage(sender: .tenant, text: ticket.message)
+        }
+        // Append the landlord's reply
+        ticket.appendMessage(sender: .landlord, text: text)
         ticket.aiReply = text
         ticket.status = .answered
+        saveAndRefresh()
+    }
+
+    /// Ensures the AI auto-reply is recorded in the conversation history
+    func recordAutoReply(_ reply: String, for ticket: TenantTicketModel) {
+        if ticket.messages.isEmpty {
+            ticket.appendMessage(sender: .tenant, text: ticket.message)
+        }
+        // Don't duplicate auto-replies that are already in the conversation
+        let alreadyRecorded = ticket.messages.contains { $0.sender == .landlord && $0.text == reply }
+        if !alreadyRecorded && !reply.isEmpty {
+            ticket.appendMessage(sender: .landlord, text: reply)
+        }
         saveAndRefresh()
     }
 
