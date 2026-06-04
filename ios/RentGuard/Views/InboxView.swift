@@ -2,7 +2,7 @@
 //  InboxView.swift
 //  RentGuard
 //
-//  Main inbox with AI-triaged ticket list and filters
+//  Main inbox with AI-triaged ticket list, haptics, and animated empty states
 //
 
 import SwiftUI
@@ -18,8 +18,10 @@ struct InboxView: View {
                 triageStrip
                 if viewModel.filteredTickets.isEmpty {
                     emptyState
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 } else {
                     ticketList
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
             }
             .padding(.horizontal, 18)
@@ -27,6 +29,7 @@ struct InboxView: View {
             .padding(.bottom, 120)
         }
         .background(BackgroundView().ignoresSafeArea())
+        .animation(.spring(response: 0.38, dampingFraction: 0.78), value: viewModel.filteredTickets.count)
     }
 
     private var header: some View {
@@ -75,6 +78,8 @@ struct InboxView: View {
                     isSelected: viewModel.selectedFilter == nil,
                     tint: .white
                 ) {
+                    let impact = UIImpactFeedbackGenerator(style: .light)
+                    impact.impactOccurred()
                     withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                         viewModel.selectedFilter = nil
                     }
@@ -85,6 +90,8 @@ struct InboxView: View {
                         isSelected: viewModel.selectedFilter == category,
                         tint: category.tint
                     ) {
+                        let impact = UIImpactFeedbackGenerator(style: .light)
+                        impact.impactOccurred()
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
                             viewModel.selectedFilter =
                                 viewModel.selectedFilter == category ? nil : category
@@ -97,7 +104,7 @@ struct InboxView: View {
 
     private var ticketList: some View {
         VStack(spacing: 12) {
-            ForEach(viewModel.filteredTickets) { ticket in
+            ForEach(Array(viewModel.filteredTickets.enumerated()), id: \.element.id) { index, ticket in
                 NavigationLink(value: ticket) {
                     TicketRow(
                         ticket: ticket,
@@ -105,22 +112,41 @@ struct InboxView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.92).combined(with: .opacity),
+                    removal: .scale(scale: 0.85).combined(with: .opacity)
+                ))
             }
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 24) {
             Spacer().frame(height: 60)
-            Image(systemName: "tray.fill")
-                .font(.system(size: 52))
-                .foregroundStyle(.white.opacity(0.35))
-            Text("No tickets match this filter")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.55))
-            Text("Everything is under control")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.35))
+
+            ZStack {
+                Image(systemName: "tray.fill")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.white.opacity(0.15))
+                    .modifier(FloatingAnimation(delay: 0))
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Color(red: 0.31, green: 0.82, blue: 0.37).opacity(0.4))
+                    .offset(x: 22, y: -10)
+                    .modifier(FloatingAnimation(delay: 0.6))
+            }
+            .frame(height: 80)
+
+            VStack(spacing: 10) {
+                Text(viewModel.selectedFilter != nil
+                    ? "No \(viewModel.selectedFilter!.rawValue) tickets"
+                    : "No tickets match this filter")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+                Text("Everything is under control")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.35))
+            }
             Spacer().frame(height: 60)
         }
         .frame(maxWidth: .infinity)
@@ -139,6 +165,7 @@ private struct MetricCard: View {
             Text(value)
                 .font(.system(size: 28, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
+                .contentTransition(.numericText())
             Text(label)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.white.opacity(0.6))
@@ -206,6 +233,7 @@ private struct TicketRow: View {
                 Circle()
                     .stroke(ticket.category.tint, lineWidth: 2)
                     .frame(width: 42, height: 42)
+                    .modifier(PulseAnimation())
             }
 
             Image(systemName: ticket.category.iconName)
@@ -283,5 +311,24 @@ private struct TicketRow: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 4)
             .background(ticket.status.tint.opacity(0.15), in: Capsule())
+    }
+}
+
+// MARK: - Pulse Animation for Priority Tickets
+
+struct PulseAnimation: ViewModifier {
+    @State private var opacity: Double = 0.3
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(opacity)
+            .onAppear {
+                withAnimation(
+                    .easeInOut(duration: 1.0)
+                    .repeatForever(autoreverses: true)
+                ) {
+                    opacity = 0.9
+                }
+            }
     }
 }

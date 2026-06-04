@@ -18,6 +18,7 @@ final class TicketViewModel {
     var selectedFilter: TicketCategory? = nil
     var searchQuery: String = ""
     var selectedTicketID: UUID?
+    var notificationService: NotificationService?
 
     private let aiService = AIWorkflowService()
 
@@ -100,6 +101,8 @@ final class TicketViewModel {
     }
 
     func resolveTicket(_ ticket: TenantTicketModel) {
+        let impact = UIImpactFeedbackGenerator(style: .heavy)
+        impact.prepare()
         withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
             ticket.status = .resolved
             ticket.resolvedAt = Date()
@@ -107,22 +110,29 @@ final class TicketViewModel {
             if let appointment = appointment(for: ticket.id) {
                 appointment.status = .completed
             }
+            notificationService?.cancelNotifications(for: ticket.id)
             saveAndRefresh()
         }
+        impact.impactOccurred()
     }
 
     func escalateTicket(_ ticket: TenantTicketModel) {
+        let impact = UIImpactFeedbackGenerator(style: .heavy)
+        impact.prepare()
         withAnimation(.spring(response: 0.34, dampingFraction: 0.78)) {
             ticket.status = .escalated
             ticket.escalationCount += 1
             ticket.priority = max(1, ticket.priority - 1)
             saveAndRefresh()
         }
+        impact.impactOccurred()
+        notificationService?.notifyEmergencyTicket(ticket)
     }
 
     func scheduleFollowUp(_ ticket: TenantTicketModel, hoursFromNow: Double = 48) {
         ticket.followUpAt = Date().addingTimeInterval(hoursFromNow * 3600)
         saveAndRefresh()
+        notificationService?.notifyFollowUp(ticket: ticket, inHours: Int(hoursFromNow))
     }
 
     func addNote(_ ticket: TenantTicketModel, note: String) {
@@ -221,6 +231,7 @@ final class TicketViewModel {
     /// 3. Suggest appointment time
     /// 4. Generate auto-reply
     /// 5. Create appointment record
+    /// 6. Send emergency notification if priority 1
     ///
     /// This is called when a new SMS comes in, or manually from the detail view.
     func runAIPipeline(on ticket: TenantTicketModel) {
@@ -273,6 +284,11 @@ final class TicketViewModel {
         addAppointment(appointment)
 
         saveAndRefresh()
+
+        // Notify if emergency
+        if priority <= 1 {
+            notificationService?.notifyEmergencyTicket(ticket)
+        }
     }
 
     /// Manually assign a specific vendor to a ticket
@@ -329,6 +345,8 @@ final class TicketViewModel {
 
     /// Called when the landlord sends a manual SMS reply
     func sendManualReply(_ text: String, to ticket: TenantTicketModel) {
+        let impact = UIImpactFeedbackGenerator(style: .light)
+        impact.prepare()
         // Ensure the tenant's original message is in the conversation
         if ticket.messages.isEmpty {
             ticket.appendMessage(sender: .tenant, text: ticket.message)
@@ -338,6 +356,7 @@ final class TicketViewModel {
         ticket.aiReply = text
         ticket.status = .answered
         saveAndRefresh()
+        impact.impactOccurred()
     }
 
     /// Ensures the AI auto-reply is recorded in the conversation history

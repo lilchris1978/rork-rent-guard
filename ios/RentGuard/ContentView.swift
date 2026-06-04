@@ -2,23 +2,60 @@
 //  ContentView.swift
 //  RentGuard
 //
-//  Tab navigation shell — Inbox, Analytics, Settings
+//  Tab navigation shell — gated by auth, then by profile setup
 //
 
 import SwiftUI
 import SwiftData
 
 struct ContentView: View {
+    @Environment(AuthManager.self) private var auth
+    @Environment(NotificationService.self) private var notificationService
     @Environment(\.modelContext) private var modelContext
+
     @State private var viewModel = TicketViewModel()
     @Query private var profiles: [LandlordProfileModel]
+    @State private var navigateToTicketID: UUID?
 
     var body: some View {
         Group {
-            if profiles.isEmpty {
+            if auth.isLoading {
+                launchScreen
+            } else if auth.user == nil {
+                AuthView()
+            } else if profiles.isEmpty {
                 LoginView()
             } else {
                 mainContent
+            }
+        }
+    }
+
+    private var launchScreen: some View {
+        ZStack {
+            BackgroundView().ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.18, green: 0.82, blue: 0.78),
+                                Color(red: 0.09, green: 0.62, blue: 0.74)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 64, height: 64)
+                    .overlay {
+                        Image(systemName: "building.2.fill")
+                            .font(.system(size: 28, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+
+                ProgressView()
+                    .tint(.white)
             }
         }
     }
@@ -36,6 +73,13 @@ struct ContentView: View {
             }
 
             NavigationStack {
+                TenantsView()
+            }
+            .tabItem {
+                Label("Tenants", systemImage: "person.2.fill")
+            }
+
+            NavigationStack {
                 AnalyticsView(viewModel: viewModel)
             }
             .tabItem {
@@ -46,11 +90,11 @@ struct ContentView: View {
                 VendorManagementView(viewModel: viewModel)
             }
             .tabItem {
-                Label("Vendors", systemImage: "person.3.fill")
+                Label("Vendors", systemImage: "wrench.and.screwdriver.fill")
             }
 
             NavigationStack {
-                SettingsView()
+                SettingsView(authManager: auth)
             }
             .tabItem {
                 Label("Settings", systemImage: "gearshape.fill")
@@ -59,6 +103,15 @@ struct ContentView: View {
         .tint(Color(red: 0.18, green: 0.82, blue: 0.78))
         .onAppear {
             viewModel.configure(with: modelContext)
+            viewModel.notificationService = notificationService
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .openTicketNotification)
+        ) { notification in
+            if let ticketIDString = notification.userInfo?["ticketID"] as? String,
+               let ticketID = UUID(uuidString: ticketIDString) {
+                viewModel.selectedTicketID = ticketID
+            }
         }
     }
 }
@@ -93,5 +146,7 @@ struct BackgroundView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [TenantTicketModel.self])
+        .environment(AuthManager())
+        .environment(NotificationService())
+        .modelContainer(for: [TenantTicketModel.self, TenantModel.self])
 }

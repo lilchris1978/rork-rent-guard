@@ -2,13 +2,15 @@
 //  SettingsView.swift
 //  RentGuard
 //
-//  Landlord profile editor — name, email, phone, properties, units, and preferences
+//  Landlord profile editor — name, email, phone, properties, units, preferences, and sign-out
 //
 
 import SwiftUI
 import SwiftData
 
 struct SettingsView: View {
+    let authManager: AuthManager
+
     @Environment(\.modelContext) private var modelContext
     @Query private var profiles: [LandlordProfileModel]
     @Query private var properties: [PropertyModel]
@@ -27,6 +29,7 @@ struct SettingsView: View {
     @State private var editingProperty: PropertyModel?
     @State private var showSavedToast = false
     @State private var showLogoutConfirm = false
+    @State private var showSignOutConfirm = false
 
     private var profile: LandlordProfileModel? { profiles.first }
 
@@ -64,6 +67,16 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Clear Profile", role: .destructive, action: deleteProfile)
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Sign out of RentGuard? Your profile data stays on this device.",
+            isPresented: $showSignOutConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Sign Out", role: .destructive) {
+                Task { await authManager.signOut() }
+            }
             Button("Cancel", role: .cancel) {}
         }
     }
@@ -143,6 +156,7 @@ struct SettingsView: View {
                 .background(Color(red: 0.18, green: 0.82, blue: 0.78).opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
                 .foregroundStyle(Color(red: 0.18, green: 0.82, blue: 0.78))
             }
+            .buttonStyle(PressableButtonStyle())
         }
         .padding(18)
         .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -169,6 +183,7 @@ struct SettingsView: View {
                     }
                     .foregroundStyle(Color(red: 0.18, green: 0.82, blue: 0.78))
                 }
+                .buttonStyle(PressableButtonStyle())
             }
 
             if properties.isEmpty {
@@ -188,6 +203,7 @@ struct SettingsView: View {
             Image(systemName: "building.2")
                 .font(.system(size: 32))
                 .foregroundStyle(.white.opacity(0.25))
+                .modifier(FloatingAnimation(delay: 0))
             Text("No properties added yet")
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.45))
@@ -314,8 +330,9 @@ struct SettingsView: View {
                                 )
                                 .foregroundStyle(.white)
                             }
+                            .buttonStyle(PressableButtonStyle())
 
-                            if property.id != UUID() {
+                            if !properties.contains(where: { $0.id == property.id }) == false {
                                 Button(role: .destructive, action: deleteProperty) {
                                     HStack(spacing: 8) {
                                         Image(systemName: "trash.fill")
@@ -327,6 +344,7 @@ struct SettingsView: View {
                                     .background(Color(red: 1.0, green: 0.42, blue: 0.26).opacity(0.18), in: RoundedRectangle(cornerRadius: 16))
                                     .foregroundStyle(Color(red: 1.0, green: 0.42, blue: 0.26))
                                 }
+                                .buttonStyle(PressableButtonStyle())
                             }
                         }
                         .padding(18)
@@ -487,14 +505,35 @@ struct SettingsView: View {
 
     private var accountActions: some View {
         VStack(spacing: 16) {
+            if let user = authManager.user {
+                Text(user.email)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+
             Text("RentGuard v1.0")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.4))
 
-            Button(role: .destructive, action: { showLogoutConfirm = true }) {
+            Button {
+                showSignOutConfirm = true
+            } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "rectangle.portrait.and.arrow.right")
-                    Text("Reset Profile & Log Out")
+                    Text("Sign Out")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .foregroundStyle(.white.opacity(0.7))
+                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+            }
+            .buttonStyle(PressableButtonStyle())
+
+            Button(role: .destructive, action: { showLogoutConfirm = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "trash")
+                    Text("Reset Profile & Data")
                         .font(.subheadline.weight(.semibold))
                 }
                 .foregroundStyle(Color(red: 1.0, green: 0.42, blue: 0.26))
@@ -538,6 +577,8 @@ struct SettingsView: View {
         profile.phoneNumber = phoneNumber
         profile.companyName = companyName
         try? modelContext.save()
+        let impact = UIImpactFeedbackGenerator(style: .medium)
+        impact.impactOccurred()
         showSaved()
     }
 
@@ -547,6 +588,8 @@ struct SettingsView: View {
             modelContext.insert(property)
         }
         try? modelContext.save()
+        let impact = UIImpactFeedbackGenerator(style: .medium)
+        impact.impactOccurred()
         showPropertyEditor = false
         showSaved()
     }
@@ -557,6 +600,8 @@ struct SettingsView: View {
             modelContext.delete(existing)
             try? modelContext.save()
         }
+        let impact = UIImpactFeedbackGenerator(style: .rigid)
+        impact.impactOccurred()
         showPropertyEditor = false
         showSaved()
     }
@@ -665,6 +710,6 @@ private struct IntegrationBadge: View {
 }
 
 #Preview {
-    SettingsView()
+    SettingsView(authManager: AuthManager())
         .modelContainer(for: [LandlordProfileModel.self, PropertyModel.self])
 }
