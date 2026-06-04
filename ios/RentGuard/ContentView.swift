@@ -11,8 +11,19 @@ import SwiftData
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var viewModel = TicketViewModel()
+    @Query private var profiles: [LandlordProfileModel]
 
     var body: some View {
+        Group {
+            if profiles.isEmpty {
+                LoginView()
+            } else {
+                mainContent
+            }
+        }
+    }
+
+    private var mainContent: some View {
         TabView {
             NavigationStack {
                 InboxView(viewModel: viewModel)

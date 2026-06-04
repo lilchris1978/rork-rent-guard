@@ -15,6 +15,8 @@ struct RentGuardApp: App {
             TenantTicketModel.self,
             VendorModel.self,
             AppointmentModel.self,
+            LandlordProfileModel.self,
+            PropertyModel.self,
         ])
         let modelConfiguration = ModelConfiguration(
             schema: schema,

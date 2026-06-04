@@ -2,19 +2,33 @@
 //  SettingsView.swift
 //  RentGuard
 //
-//  Landlord profile, property management, and notification preferences
+//  Landlord profile editor — name, email, phone, properties, units, and preferences
 //
 
 import SwiftUI
+import SwiftData
 
 struct SettingsView: View {
-    @State private var landlordName = "Alex Morgan"
-    @State private var propertyCount = "3"
-    @State private var unitCount = "23"
+    @Environment(\.modelContext) private var modelContext
+    @Query private var profiles: [LandlordProfileModel]
+    @Query private var properties: [PropertyModel]
+
+    @State private var name = ""
+    @State private var email = ""
+    @State private var phoneNumber = ""
+    @State private var companyName = ""
+
     @State private var autoReplyEnabled = true
     @State private var followUpHours: Double = 48
     @State private var emergencyCallEnabled = true
     @State private var aiConfidenceThreshold: Double = 0.85
+
+    @State private var showPropertyEditor = false
+    @State private var editingProperty: PropertyModel?
+    @State private var showSavedToast = false
+    @State private var showLogoutConfirm = false
+
+    private var profile: LandlordProfileModel? { profiles.first }
 
     var body: some View {
         ZStack {
@@ -24,27 +38,50 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     header
                     profileCard
+                    propertiesCard
                     notificationSettings
                     aiSettings
-                    aboutCard
+                    accountActions
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 18)
                 .padding(.bottom, 120)
             }
         }
+        .onAppear(perform: loadProfile)
+        .sheet(isPresented: $showPropertyEditor) {
+            propertyEditorSheet
+        }
+        .overlay(alignment: .bottom) {
+            if showSavedToast {
+                savedToast
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .confirmationDialog(
+            "Clear your profile? This removes your saved data and returns to setup.",
+            isPresented: $showLogoutConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Clear Profile", role: .destructive, action: deleteProfile)
+            Button("Cancel", role: .cancel) {}
+        }
     }
+
+    // MARK: - Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Settings")
                 .font(.system(size: 36, weight: .black, design: .rounded))
                 .foregroundStyle(.white)
-            Text("Profile & preferences")
+            Text("Profile, properties & preferences")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(.white.opacity(0.68))
         }
     }
+
+    // MARK: - Profile Card
 
     private var profileCard: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -58,16 +95,16 @@ struct SettingsView: View {
                             )
                         )
                         .frame(width: 64, height: 64)
-                    Text(String(landlordName.prefix(2)))
+                    Text(profile?.initials ?? "??")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(.white)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(landlordName)
+                    Text(profile?.name ?? "Landlord")
                         .font(.title3.weight(.bold))
                         .foregroundStyle(.white)
-                    Text("\(propertyCount) properties · \(unitCount) units")
+                    Text("\(totalUnitCount) units across \(properties.count) properties")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.6))
                 }
@@ -78,21 +115,257 @@ struct SettingsView: View {
             VStack(spacing: 14) {
                 settingsInputRow(
                     iconName: "person.fill", label: "Name",
-                    text: $landlordName
+                    text: $name
                 )
                 settingsInputRow(
-                    iconName: "building.2.fill", label: "Properties",
-                    text: $propertyCount, keyboardType: .numberPad
+                    iconName: "envelope.fill", label: "Email",
+                    text: $email, keyboardType: .emailAddress
                 )
                 settingsInputRow(
-                    iconName: "house.fill", label: "Total Units",
-                    text: $unitCount, keyboardType: .numberPad
+                    iconName: "phone.fill", label: "Phone",
+                    text: $phoneNumber, keyboardType: .phonePad
                 )
+                settingsInputRow(
+                    iconName: "briefcase.fill", label: "Company",
+                    text: $companyName
+                )
+            }
+
+            Button(action: saveProfile) {
+                HStack(spacing: 8) {
+                    Image(systemName: "square.and.arrow.down.fill")
+                        .font(.system(size: 13))
+                    Text("Save Changes")
+                        .font(.subheadline.weight(.bold))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 13)
+                .background(Color(red: 0.18, green: 0.82, blue: 0.78).opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
+                .foregroundStyle(Color(red: 0.18, green: 0.82, blue: 0.78))
             }
         }
         .padding(18)
         .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
+
+    // MARK: - Properties Card
+
+    private var propertiesCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("Your Properties", systemImage: "building.columns.fill")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Spacer()
+                Button {
+                    editingProperty = PropertyModel()
+                    showPropertyEditor = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 16))
+                        Text("Add")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundStyle(Color(red: 0.18, green: 0.82, blue: 0.78))
+                }
+            }
+
+            if properties.isEmpty {
+                emptyPropertiesPlaceholder
+            } else {
+                ForEach(properties) { property in
+                    propertyRow(property)
+                }
+            }
+        }
+        .padding(18)
+        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
+
+    private var emptyPropertiesPlaceholder: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "building.2")
+                .font(.system(size: 32))
+                .foregroundStyle(.white.opacity(0.25))
+            Text("No properties added yet")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.45))
+            Text("Tap \"Add\" to register your first property with its address and unit count.")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.3))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 20)
+    }
+
+    private func propertyRow(_ property: PropertyModel) -> some View {
+        Button {
+            editingProperty = property
+            showPropertyEditor = true
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(property.name)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text(property.totalUnitsFormatted)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color(red: 0.18, green: 0.82, blue: 0.78))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color(red: 0.18, green: 0.82, blue: 0.78).opacity(0.15), in: Capsule())
+                }
+                if !property.address.isEmpty {
+                    Text(property.fullAddress)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(2)
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Property Editor Sheet
+
+    private var propertyEditorSheet: some View {
+        NavigationStack {
+            ZStack {
+                BackgroundView().ignoresSafeArea()
+
+                if let property = editingProperty {
+                    ScrollView {
+                        VStack(spacing: 18) {
+                            propertyEditorField(
+                                icon: "house.fill", label: "Property Name",
+                                placeholder: "Hilltop Apartments",
+                                text: Binding(
+                                    get: { property.name },
+                                    set: { property.name = $0 }
+                                )
+                            )
+                            propertyEditorField(
+                                icon: "mappin.and.ellipse", label: "Street Address",
+                                placeholder: "123 Main Street",
+                                text: Binding(
+                                    get: { property.address },
+                                    set: { property.address = $0 }
+                                )
+                            )
+                            HStack(spacing: 12) {
+                                propertyEditorField(
+                                    icon: "building.2", label: "City",
+                                    placeholder: "Austin",
+                                    text: Binding(
+                                        get: { property.city },
+                                        set: { property.city = $0 }
+                                    )
+                                )
+                                propertyEditorField(
+                                    icon: "map", label: "State",
+                                    placeholder: "TX",
+                                    text: Binding(
+                                        get: { property.state },
+                                        set: { property.state = $0 }
+                                    )
+                                )
+                            }
+                            HStack(spacing: 12) {
+                                propertyEditorField(
+                                    icon: "envelope", label: "ZIP",
+                                    placeholder: "78701",
+                                    text: Binding(
+                                        get: { property.zipCode },
+                                        set: { property.zipCode = $0 }
+                                    ),
+                                    keyboardType: .numberPad
+                                )
+                                propertyEditorField(
+                                    icon: "door.left.hand.open", label: "Units",
+                                    placeholder: "8",
+                                    text: Binding(
+                                        get: { String(property.unitCount) },
+                                        set: { property.unitCount = Int($0) ?? 0 }
+                                    ),
+                                    keyboardType: .numberPad
+                                )
+                            }
+
+                            Button(action: saveProperty) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                    Text("Save Property")
+                                        .font(.headline.weight(.bold))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                                .background(
+                                    LinearGradient(
+                                        colors: [Color(red: 0.18, green: 0.82, blue: 0.78), Color(red: 0.09, green: 0.62, blue: 0.74)],
+                                        startPoint: .leading, endPoint: .trailing
+                                    ),
+                                    in: RoundedRectangle(cornerRadius: 16)
+                                )
+                                .foregroundStyle(.white)
+                            }
+
+                            if property.id != UUID() {
+                                Button(role: .destructive, action: deleteProperty) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "trash.fill")
+                                        Text("Delete Property")
+                                            .font(.headline.weight(.bold))
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 16)
+                                    .background(Color(red: 1.0, green: 0.42, blue: 0.26).opacity(0.18), in: RoundedRectangle(cornerRadius: 16))
+                                    .foregroundStyle(Color(red: 1.0, green: 0.42, blue: 0.26))
+                                }
+                            }
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+            .navigationTitle(editingProperty?.name.isEmpty == false ? editingProperty?.name ?? "Property" : "New Property")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showPropertyEditor = false }
+                }
+            }
+        }
+    }
+
+    private func propertyEditorField(
+        icon: String, label: String, placeholder: String,
+        text: Binding<String>, keyboardType: UIKeyboardType = .default
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.4))
+                Text(label.uppercased())
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            TextField(placeholder, text: text)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.white)
+                .keyboardType(keyboardType)
+                .padding(12)
+                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    // MARK: - Notification Settings
 
     private var notificationSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -135,25 +408,21 @@ struct SettingsView: View {
                     }
                 }
 
-                Slider(value: $followUpHours, in: 12...96, step: 12) {
-                    Text("Follow-up hours")
-                }
-                .tint(Color(red: 0.18, green: 0.82, blue: 0.78))
+                Slider(value: $followUpHours, in: 12...96, step: 12)
+                    .tint(Color(red: 0.18, green: 0.82, blue: 0.78))
 
                 HStack {
-                    Text("12h")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.4))
+                    Text("12h").font(.caption2).foregroundStyle(.white.opacity(0.4))
                     Spacer()
-                    Text("96h")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.4))
+                    Text("96h").font(.caption2).foregroundStyle(.white.opacity(0.4))
                 }
             }
         }
         .padding(18)
         .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
+
+    // MARK: - AI Settings
 
     private var aiSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -176,19 +445,13 @@ struct SettingsView: View {
                     }
                 }
 
-                Slider(value: $aiConfidenceThreshold, in: 0.5...0.99, step: 0.05) {
-                    Text("AI threshold")
-                }
-                .tint(Color(red: 0.80, green: 0.35, blue: 0.85))
+                Slider(value: $aiConfidenceThreshold, in: 0.5...0.99, step: 0.05)
+                    .tint(Color(red: 0.80, green: 0.35, blue: 0.85))
 
                 HStack {
-                    Text("Relaxed")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.4))
+                    Text("Relaxed").font(.caption2).foregroundStyle(.white.opacity(0.4))
                     Spacer()
-                    Text("Strict")
-                        .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.4))
+                    Text("Strict").font(.caption2).foregroundStyle(.white.opacity(0.4))
                 }
             }
 
@@ -220,18 +483,111 @@ struct SettingsView: View {
         .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
-    private var aboutCard: some View {
+    // MARK: - Account Actions
+
+    private var accountActions: some View {
         VStack(spacing: 16) {
             Text("RentGuard v1.0")
                 .font(.caption)
                 .foregroundStyle(.white.opacity(0.4))
-            Text("AI-powered landlord assistant. Built with Rork.")
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.3))
+
+            Button(role: .destructive, action: { showLogoutConfirm = true }) {
+                HStack(spacing: 8) {
+                    Image(systemName: "rectangle.portrait.and.arrow.right")
+                    Text("Reset Profile & Log Out")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(Color(red: 1.0, green: 0.42, blue: 0.26))
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
+        .padding(.vertical, 6)
     }
+
+    // MARK: - Toast
+
+    private var savedToast: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(Color(red: 0.31, green: 0.82, blue: 0.37))
+                .font(.system(size: 18))
+            Text("Changes saved")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+        .background(.ultraThinMaterial, in: Capsule())
+        .padding(.bottom, 40)
+    }
+
+    // MARK: - Actions
+
+    private func loadProfile() {
+        guard let profile = profile else { return }
+        name = profile.name
+        email = profile.email
+        phoneNumber = profile.phoneNumber
+        companyName = profile.companyName
+    }
+
+    private func saveProfile() {
+        guard let profile = profile else { return }
+        profile.name = name
+        profile.email = email
+        profile.phoneNumber = phoneNumber
+        profile.companyName = companyName
+        try? modelContext.save()
+        showSaved()
+    }
+
+    private func saveProperty() {
+        guard let property = editingProperty else { return }
+        if !properties.contains(where: { $0.id == property.id }) {
+            modelContext.insert(property)
+        }
+        try? modelContext.save()
+        showPropertyEditor = false
+        showSaved()
+    }
+
+    private func deleteProperty() {
+        guard let property = editingProperty else { return }
+        if let existing = properties.first(where: { $0.id == property.id }) {
+            modelContext.delete(existing)
+            try? modelContext.save()
+        }
+        showPropertyEditor = false
+        showSaved()
+    }
+
+    private func deleteProfile() {
+        if let profile = profile {
+            modelContext.delete(profile)
+        }
+        for property in properties {
+            modelContext.delete(property)
+        }
+        try? modelContext.save()
+    }
+
+    private func showSaved() {
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+            showSavedToast = true
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                showSavedToast = false
+            }
+        }
+    }
+
+    private var totalUnitCount: Int {
+        properties.reduce(0) { $0 + $1.unitCount }
+    }
+
+    // MARK: - Input Row
 
     private func settingsInputRow(
         iconName: String, label: String,
@@ -255,6 +611,8 @@ struct SettingsView: View {
         }
     }
 }
+
+// MARK: - Shared Subviews
 
 private struct ToggleRow: View {
     let iconName: String
@@ -304,4 +662,9 @@ private struct IntegrationBadge: View {
                 in: Capsule()
             )
     }
+}
+
+#Preview {
+    SettingsView()
+        .modelContainer(for: [LandlordProfileModel.self, PropertyModel.self])
 }
